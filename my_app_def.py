@@ -1,4 +1,4 @@
-#pip install streamlit pyppdf2 langchain langcahain-community python-dotenv faiss-cpu openai huggingface_hub InstructorEmbedding sentence_transformers
+#pip install streamlit pyppdf2 langchain langcahain-community python-dotenv 
 import streamlit as st 
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
@@ -29,73 +29,48 @@ def get_text_chunks(text):
 def get_vectorstore(text_chunks):
     embeddings=GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vector_store = Chroma.from_texts(texts =text_chunks,embedding = embeddings)
-    
     print("google embedding completed.")
     return vector_store
 
 def get_context_retriever_chain(vector_store):
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash",temperature=.2)
     retriever = vector_store.as_retriever()
     prompt = ChatPromptTemplate.from_messages([
-      MessagesPlaceholder(variable_name="chat_history"),
+       MessagesPlaceholder("chat_history"), #MessagesPlaceholder(variable_name="chat_history")
       ("user", "{input}"),
       ("user", "Given the above conversation, generate a search query to look up in order to get information relevant to the conversation")
     ])
-    retriever_chain = create_history_aware_retriever(llm, retriever, prompt)
-    return retriever_chain
+    return create_history_aware_retriever(llm, retriever, prompt)
+  
 
-def get_conversational_rag_chain(retriever_chain): 
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
+def get_conversational_rag_chain(history_aware_retriever): 
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash",temperature=.2)
     prompt = ChatPromptTemplate.from_messages([
       ("system", "Answer the user's questions based on the below context:\n\n{context}"),
-      MessagesPlaceholder(variable_name="chat_history"),
+      MessagesPlaceholder("chat_history"),
       ("user", "{input}"),
     ])
-    stuff_documents_chain = create_stuff_documents_chain(llm,prompt)
-    return create_retrieval_chain(retriever_chain, stuff_documents_chain)
-
-def get_response(user_input):
-    retriever_chain = get_context_retriever_chain(st.session_state.vector_store)
-    conversation_rag_chain = get_conversational_rag_chain(retriever_chain)
+    question_answer_chain = create_stuff_documents_chain(llm,prompt)
+    return create_retrieval_chain(history_aware_retriever, question_answer_chain)
     
-    response = conversation_rag_chain.invoke({
+def get_response(user_input):
+    history_aware_retriever = get_context_retriever_chain(st.session_state.vector_store)
+    rag_chain = get_conversational_rag_chain(history_aware_retriever)
+    
+    response = rag_chain.invoke({
         "chat_history": st.session_state.chat_history,
         "input": user_input
     })
-    
     return response['answer']
 
 #app config
 load_dotenv()
 st.set_page_config(page_title="SEO Tanvir Bd RAG App", page_icon= ":car:")
-st.header("Chat With Multyyiple PDFs :books: ")
+st.header("Chat With Multiple PDFs :books: ")
 
-# session state
-if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [
-            AIMessage(content="Hello, I am a bot. How can I help you?"),
-        ]
-
-
-user_question = st.text_input("Ask any question about your documents: ")
-if user_question:
-                # handle_userinput(user_question)
-                
-                response = get_response(user_question)
-                st.session_state.chat_history.append(HumanMessage(content=user_question))
-                st.session_state.chat_history.append(AIMessage(content=response))
-                
-                 # conversation
-                for message in st.session_state.chat_history:
-                    if isinstance(message, AIMessage):
-                        with st.chat_message("AI"):
-                            st.write(message.content)
-                    elif isinstance(message, HumanMessage):
-                        with st.chat_message("Human"):
-                            st.write(message.content)
-        
 with st.sidebar:
-    st.subheader("Youe Documents")
+    st.subheader("Your Documents")
+    #pdf uploader
     all_pdf_docs = st.file_uploader("Upload your PDFs here and click on 'Proceed'", accept_multiple_files= True)
     if st.button("Proceed"):
         with st.spinner("Processing.."):
@@ -109,8 +84,28 @@ with st.sidebar:
             
             #create vector store to store the chunks
             vectorstore = get_vectorstore(text_chunks)
-            st.write("vectorization completed. Now ask your question")
+            x = st.write("Vectorization completed. Now you can chat..")
+           
             
             if "vector_store" not in st.session_state:
-                st.session_state.vector_store = get_vectorstore(text_chunks)  
+                st.session_state.vector_store = get_vectorstore(text_chunks)
+                    
+# session state
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = [AIMessage(content="Hello, I am a bot. How can I helyou?"),]   
+# user input
+user_question = st.chat_input("Ask any question about your documents: ")
+if user_question:
+    response = get_response(user_question)
+    st.session_state.chat_history.append(HumanMessage(content=user_question))
+    st.session_state.chat_history.append(AIMessage(content=response))     
+     # conversation
+    for message in st.session_state.chat_history:
+        if isinstance(message, AIMessage):
+            with st.chat_message("AI"):
+                st.write(message.content)
+        elif isinstance(message, HumanMessage):
+            with st.chat_message("Human"):
+                st.write(message.content)
+
            
